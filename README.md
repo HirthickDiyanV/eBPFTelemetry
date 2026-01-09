@@ -1,4 +1,4 @@
-# 🛡️ eBPF Ransomware Behaviour Analyzer
+# 🛡️ eBPF Write Syscalls Telemetry
 
 ![Platform](https://img.shields.io/badge/Platform-Linux-linux?style=for-the-badge&logo=linux)
 ![Language](https://img.shields.io/badge/Language-Python%203%20%7C%20C-blue?style=for-the-badge&logo=python)
