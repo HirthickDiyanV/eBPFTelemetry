@@ -1,83 +1,130 @@
 #!/usr/bin/python3
 from bcc import BPF
 from time import sleep
+from rich.live import Live
+from rich.table import Table
+from rich.panel import Panel
+from rich.console import Console, Group
+from rich import box
 import os
 
 # =========================================================
-# 1. C KERNEL CODE (Aggregation, not Streaming)
+# 1. BPF KERNEL CORE
 # =========================================================
-# Distinct logic: We use a Hash Map to count 'hits' in the kernel
-# rather than sending a struct for every single write.
 bpf_source = """
 #include <uapi/linux/ptrace.h>
 #include <linux/sched.h>
 
-// key_t: Defines what we are grouping by (Process ID + Name)
 struct key_t {
     u32 pid;
     char name[TASK_COMM_LEN];
 };
 
-// 'stats': A Hash Map where Key=Process, Value=Counter
 BPF_HASH(stats, struct key_t, u64);
 
-// We hook vfs_write to count frequency
 int trace_write_entry(struct pt_regs *ctx) {
     struct key_t key = {};
-    u64 zero = 0, *val;
-    
-    // Get PID
     u64 pid_tgid = bpf_get_current_pid_tgid();
     key.pid = pid_tgid >> 32;
-    
-    // Get Name
     bpf_get_current_comm(&key.name, sizeof(key.name));
-
-    // Increment the counter for this specific PID
-    // If key doesn't exist, this helper creates it automatically.
     stats.increment(key);
-    
     return 0;
 }
 """
 
 # =========================================================
-# 2. PYTHON CONTROLLER
+# 2. UI HELPERS
+# =========================================================
+console = Console()
+
+def generate_table(sorted_counts, max_val):
+    """Creates a fresh table for the Live display"""
+    # Create table with a Title included (simpler than separate panels)
+    table = Table(box=box.SIMPLE, expand=True, title="[bold]Active System Writers[/bold]")
+    
+    table.add_column("PID", style="cyan", width=8)
+    table.add_column("Process Name", style="magenta", width=20)
+    table.add_column("Velocity", justify="right", width=12)
+    table.add_column("Threat", justify="center", width=12)
+    table.add_column("Intensity", ratio=1)
+
+    if not sorted_counts:
+        table.add_row("-", "Waiting for I/O...", "-", "🟢 IDLE", "")
+        return table
+
+    for k, v in sorted_counts:
+        count = v.value
+        
+        # Color Logic
+        if count > 1000:
+            status = "🔴 RANSOMWARE?"
+            row_style = "bold red"
+        elif count > 100:
+            status = "🟡 HIGH"
+            row_style = "yellow"
+        else:
+            status = "🟢 NORMAL"
+            row_style = "dim white"
+
+        # Bar Logic
+        bar_len = int(50 * (count / max_val))
+        bar_str = "█" * bar_len
+        
+        table.add_row(
+            str(k.pid), 
+            k.name.decode('utf-8', 'ignore'), 
+            f"{count:,}/s", 
+            status, 
+            bar_str,
+            style=row_style
+        )
+        
+    return table
+
+# =========================================================
+# 3. MAIN LOOP
 # =========================================================
 def main():
-    # Load BPF program
-    b = BPF(text=bpf_source)
+    print("[*] Compiling eBPF... (Please wait)")
     
-    # Explicitly attach the probe (different style than kprobe__ naming convention)
+    # cflags=["-w"] suppresses the compiler warnings
+    b = BPF(text=bpf_source, cflags=["-w"])
     b.attach_kprobe(event="vfs_write", fn_name="trace_write_entry")
-    
-    print("Monitoring 'vfs_write' frequency... (Ctrl+C to stop)")
 
-    try:
-        while True:
-            sleep(1) # Interval duration
-            os.system('clear') # Refresh screen
-            
-            # Retrieve data from the kernel map
-            counts = b.get_table("stats")
-            
-            print(f"{'PID':<10} {'PROCESS NAME':<20} {'WRITES / SEC':<15}")
-            print("="*50)
-            
-            # Sort data: Convert map items to list, sort by value (count)
-            # x[1].value accesses the u64 counter from the map
-            sorted_counts = sorted(counts.items(), key=lambda x: x[1].value, reverse=True)
-            
-            # Display top 15 results
-            for k, v in sorted_counts[:15]:
-                print(f"{k.pid:<10} {k.name.decode('utf-8', 'ignore'):<20} {v.value:<15}")
-            
-            # CRITICAL: Clear the map to reset counters for the next second.
-            # This ensures we see "Current Speed" and not "Total History".
-            counts.clear()
-            
-    except KeyboardInterrupt:
-        print("\nDetaching...")
+    print("[*] Starting Dashboard...")
+
+    # Static Header
+    header = Panel(
+        "[bold green]eBPF RANSOMWARE SENTINEL[/bold green]\n"
+        "[dim]Monitoring syscall: vfs_write | Mode: Live[/dim]",
+        style="green on black"
+    )
+
+    # We use Group() to bundle the Header and Table together simply
+    # auto_refresh=False gives us manual control over the update timing
+    with Live(console=console, auto_refresh=False) as live:
+        try:
+            while True:
+                # 1. Fetch Data
+                counts = b.get_table("stats")
+                sorted_counts = sorted(counts.items(), key=lambda x: x[1].value, reverse=True)[:15]
+                counts.clear()
+
+                # 2. Scaling Math
+                max_val = sorted_counts[0][1].value if sorted_counts else 1
+                
+                # 3. Build UI Group
+                table = generate_table(sorted_counts, max_val)
+                ui_group = Group(header, table)
+                
+                # 4. Force Update
+                live.update(ui_group, refresh=True)
+                
+                # 5. Wait
+                sleep(0.5)
+                
+        except KeyboardInterrupt:
+            print("\n[*] Stopping Sentinel.")
 
 if __name__ == "__main__":
     main()
