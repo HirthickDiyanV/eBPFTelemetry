@@ -35,3 +35,16 @@ You need a Linux kernel with eBPF support (4.4+) and the BCC tools installed.
 ```bash
 sudo apt-get update
 sudo apt-get install bpfcc-tools linux-headers-$(uname -r) python3-bpfcc
+```
+---
+
+## 🕹️ Usage
+
+### Step 1: Start the Detector
+```bash
+sudo python3 main.py
+```
+### Step 2: Simulate an Attack
+```bash
+sudo python3 test.py
+```
