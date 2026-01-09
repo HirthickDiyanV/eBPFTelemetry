@@ -35,6 +35,7 @@ You need a Linux kernel with eBPF support (4.4+) and the BCC tools installed.
 ```bash
 sudo apt-get update
 sudo apt-get install bpfcc-tools linux-headers-$(uname -r) python3-bpfcc
+pip3 install rich
 ```
 ---
 
